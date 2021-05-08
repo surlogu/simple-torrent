@@ -18,7 +18,13 @@ func (s *Server) backgroundRoutines() {
 
 	//poll torrents and files
 	go func() {
-		for {
+		// initial state
+		s.state.Lock()
+		s.state.Torrents = s.engine.GetTorrents()
+		s.state.Downloads = s.listFiles()
+		s.state.Unlock()
+
+		for range time.Tick(3 * time.Second) {
 			if s.state.NumConnections() > 0 {
 				// only update the state object if user connected
 				s.state.Lock()
@@ -28,26 +34,25 @@ func (s *Server) backgroundRoutines() {
 				s.state.Push()
 			}
 			s.engine.TaskRoutine()
-			time.Sleep(3 * time.Second)
 		}
 	}()
 
 	//start collecting stats
 	go func() {
-		for {
+		for range time.Tick(5 * time.Second) {
 			if s.state.NumConnections() > 0 {
 				c := s.engine.Config()
 				s.state.Stats.System.loadStats(c.DownloadDirectory)
+				s.state.Stats.ConnStat = s.engine.ConnStat()
+				s.state.Push()
 			}
-			time.Sleep(5 * time.Second)
 		}
 	}()
 
 	// rss updater
 	go func() {
-		for {
+		for range time.Tick(30 * time.Minute) {
 			s.updateRSS()
-			time.Sleep(30 * time.Minute)
 		}
 	}()
 

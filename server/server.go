@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cloud-torrent/server/httpmiddleware"
 	"compress/gzip"
 	"crypto/tls"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"errors"
 
 	"github.com/NYTimes/gziphandler"
+	"github.com/anacrolix/torrent"
 	"github.com/boypt/scraper"
 	"github.com/jpillora/cloud-torrent/engine"
 	ctstatic "github.com/jpillora/cloud-torrent/static"
@@ -81,11 +83,12 @@ type Server struct {
 		Torrents        map[string]*engine.Torrent
 		Users           map[string]string
 		Stats           struct {
-			Title   string
-			Version string
-			Runtime string
-			Uptime  time.Time
-			System  stats
+			Title    string
+			Version  string
+			Runtime  string
+			Uptime   time.Time
+			System   stats
+			ConnStat torrent.ConnStats
 		}
 	}
 }
@@ -197,8 +200,12 @@ func (s *Server) Run(version string) error {
 	if s.RestAPI != "" {
 		go func() {
 			restServer := http.Server{
-				Addr:    s.RestAPI,
-				Handler: requestlog.Wrap(http.Handler(http.HandlerFunc(s.restAPIhandle))),
+				Addr: s.RestAPI,
+				Handler: requestlog.Wrap(
+					httpmiddleware.RealIP(
+						http.Handler(http.HandlerFunc(s.restAPIhandle)),
+					),
+				),
 			}
 			log.Println("[RestAPI] listening at ", s.RestAPI)
 			if err := restServer.ListenAndServe(); err != nil {
@@ -210,6 +217,8 @@ func (s *Server) Run(version string) error {
 	//define handler chain, from last to first
 	h := http.Handler(http.HandlerFunc(s.webHandle))
 	//gzip
+	h = httpmiddleware.RealIP(h)
+	h = httpmiddleware.Liveness(h)
 	gzipWrap, _ := gziphandler.NewGzipLevelAndMinSize(gzip.DefaultCompression, 0)
 	h = gzipWrap(h)
 	//auth
@@ -223,7 +232,6 @@ func (s *Server) Run(version string) error {
 		h = cookieauth.New().SetUserPass(user, pass).Wrap(h)
 		log.Printf("Enabled HTTP authentication")
 	}
-	h = livenessWrap(h)
 	if s.Log {
 		h = requestlog.Wrap(h)
 	}
